@@ -9,7 +9,10 @@
 */
 typedef struct _priqueue_t
 {
-
+  void ** data;
+  int(*comparerFunc)(const void *, const void *);
+  int size;
+  size_t back;
 } priqueue_t;
 
 
