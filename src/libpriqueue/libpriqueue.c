@@ -136,11 +136,11 @@ void *priqueue_at(priqueue_t *q, int index)
 int priqueue_remove(priqueue_t *q, void *ptr)
 {
 	int count = 0;
-	for(int i = q->size; i>=0; i--)
+	for(int i = q->size-1; i>=0; i--)
 	{
 		if(q->data[i] == ptr)
 		{
-			priqueue_remove_at(q, i);
+			free(priqueue_remove_at(q, i));
 			count++;
 		}
 	}
@@ -196,8 +196,8 @@ int priqueue_size(priqueue_t *q)
 void priqueue_destroy(priqueue_t *q)
 {
 	for(int i=0;i<q->size;i++)
-	{
-		//free(q->data[i]);
-	}
-	free(q->data);
+  {
+    free(q->data[i]);
+  }
+  free(q->data);
 }

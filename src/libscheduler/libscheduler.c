@@ -6,7 +6,6 @@
 #include <string.h>
 
 #include "libscheduler.h"
-#include "../libpriqueue/libpriqueue.h"
 
 
 /**
@@ -16,9 +15,26 @@
 */
 typedef struct _job_t
 {
-
+  int priority;
+  int arrival_time;
+  int job_id;
+  int running_time;
+  int running;
+  int start_time;
+  int response_time;
 } job_t;
 
+int job_compare(const void* j1, const void* j2)
+{
+  return ((job_t*) j1)->priority - ((job_t*) j2)->priority;
+}
+int job_compare_sjf(const void* j1, const void* j2)
+{
+  job_t* job2 = (job_t*) j2;
+  if(job2->running == 1)
+    return 1;
+  return ((job_t*) j1)->priority - ((job_t*) j2)->priority;
+}
 
 /**
   Initalizes the scheduler.
@@ -34,7 +50,17 @@ typedef struct _job_t
 */
 void scheduler_start_up(int cores, scheme_t scheme)
 {
-
+  core_count = cores;
+  current_scheme = scheme;
+  if(scheme == SJF || scheme == PRI)
+    priqueue_init(&job_queue, job_compare_sjf);
+  else
+    priqueue_init(&job_queue, job_compare);
+  core_active = 0;
+  jobs_count = 0;
+  accumulated_wait = 0;
+  accumulated_turnaround = 0;
+  accumulated_response = 0;
 }
 
 
@@ -60,7 +86,108 @@ void scheduler_start_up(int cores, scheme_t scheme)
  */
 int scheduler_new_job(int job_number, int time, int running_time, int priority)
 {
-	return -1;
+  jobs_count++;
+  //initializes new job
+  job_t* new_job = (job_t*) malloc(sizeof(job_t));
+  new_job->job_id = job_number;
+  new_job->running_time = running_time;
+  new_job->arrival_time = time;
+  new_job->running = 0;
+  new_job->response_time = -1;
+
+  int job_index;
+  if(core_active == 0)
+    core_active = 1;
+  //decides on priority of new job based on scheme
+  switch (current_scheme) 
+  {
+    case FCFS:
+      new_job->priority = 1;     //everything has equal priority, so new elements enter at back of queue
+      //add job to queue
+      job_index = priqueue_offer(&job_queue, new_job);
+      //if new_job is at front of queue, it should be running
+      if(job_index == 0)
+      {
+        new_job->response_time = 0;
+        new_job->running = 1;
+        return 0;
+      }
+      break;
+
+    case SJF:
+      new_job->priority = new_job->running_time;
+      //add job to queue
+      job_index = priqueue_offer(&job_queue, new_job);
+      //if new_job is at front of queue, it should be running
+      if(job_index == 0)
+      {
+        new_job->response_time = 0;
+        new_job->running = 1;
+        return 0;
+      }
+      break;
+
+    case PSJF:
+      new_job->priority = new_job->running_time;     //job's priority is its runtime
+      //update runtime of job currently running if queue is not empty
+      job_t* running_job = NULL;
+      if(priqueue_size(&job_queue) > 0)
+      {
+        running_job = (job_t*)priqueue_peek(&job_queue);
+        running_job->priority = running_job->running_time - (time - running_job->start_time);
+      }
+      //add job to queue
+      job_index = priqueue_offer(&job_queue, new_job);
+      //if new_job is at front of queue, it should be running
+      if(job_index == 0)
+      {
+        new_job->response_time = 0;
+        new_job->start_time = time;
+        new_job->running = 1;
+        return 0;
+      }
+      break;  
+
+    case PRI:
+      new_job->priority = priority;
+      //add job to queue
+      job_index = priqueue_offer(&job_queue, new_job);
+      //if new_job is at front of queue, it should be running
+      if(job_index == 0)
+      {
+        new_job->response_time = 0;
+        new_job->running = 1;
+        return 0;
+      }
+      break;
+
+    case PPRI:
+      new_job->priority = priority;
+      //add job to queue
+      job_index = priqueue_offer(&job_queue, new_job);
+      //if new_job is at front of queue, it should be running
+      if(job_index == 0)
+      {
+        new_job->response_time = 0;
+        new_job->running = 1;
+        return 0;
+      }
+      break;
+
+    case RR:
+      new_job->priority = 1;     //everything has equal priority, so new elements enter at back of queue
+      //add job to queue
+      job_index = priqueue_offer(&job_queue, new_job);
+      //if new_job is at front of queue, it should be running
+      if(job_index == 0)
+      {
+        new_job->response_time = 0;
+        new_job->running = 1;
+        return 0;
+      }
+      break;
+  }
+  return -1;
 }
 
 
@@ -80,7 +207,22 @@ int scheduler_new_job(int job_number, int time, int running_time, int priority)
  */
 int scheduler_job_finished(int core_id, int job_number, int time)
 {
-	return -1;
+  job_t* queue_front = (job_t*) priqueue_peek(&job_queue);
+  accumulated_wait += (time - queue_front->running_time - queue_front->arrival_time);
+  accumulated_response += queue_front->response_time;
+  accumulated_turnaround += (time - queue_front->arrival_time);
+  priqueue_remove(&job_queue, queue_front);
+  if(priqueue_size(&job_queue) == 0)
+  {
+    core_active = 0;
+    return -1;
+  }
+  job_t * new_running_job = (job_t*)priqueue_peek(&job_queue);
+  if(new_running_job->response_time == -1)
+    new_running_job->response_time = time - new_running_job->arrival_time;
+  new_running_job->start_time = time;
+  new_running_job->running = 1;
+  return new_running_job->job_id;
 }
 
 
@@ -99,7 +241,14 @@ int scheduler_job_finished(int core_id, int job_number, int time)
  */
 int scheduler_quantum_expired(int core_id, int time)
 {
-	return -1;
+  job_t* front = (job_t*) priqueue_poll(&job_queue);
+  front->running = 0;
+  priqueue_offer(&job_queue, front);
+  job_t* new_front = (job_t*) priqueue_peek(&job_queue);
+  if(new_front->response_time == -1)
+    new_front->response_time = time - new_front->arrival_time;
+  new_front->running = 1;
+	return new_front->job_id;
 }
 
 
@@ -112,7 +261,7 @@ int scheduler_quantum_expired(int core_id, int time)
  */
 float scheduler_average_waiting_time()
 {
-	return 0.0;
+	return (float)accumulated_wait/(float)jobs_count;
 }
 
 
@@ -125,7 +274,7 @@ float scheduler_average_waiting_time()
  */
 float scheduler_average_turnaround_time()
 {
-	return 0.0;
+	return (float)accumulated_turnaround/(float)jobs_count;
 }
 
 
@@ -138,7 +287,7 @@ float scheduler_average_turnaround_time()
  */
 float scheduler_average_response_time()
 {
-	return 0.0;
+	return (float)accumulated_response/(float)jobs_count;
 }
 
 
@@ -150,7 +299,7 @@ float scheduler_average_response_time()
 */
 void scheduler_clean_up()
 {
-
+  priqueue_destroy(&job_queue);
 }
 
 
