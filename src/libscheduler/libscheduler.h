@@ -20,6 +20,7 @@ int accumulated_turnaround;
 int core_count;
 int core_active;
 int *core_statuses;
+int *core_jobs;
 
 void  scheduler_start_up               (int cores, scheme_t scheme);
 int   scheduler_new_job                (int job_number, int time, int running_time, int priority);
