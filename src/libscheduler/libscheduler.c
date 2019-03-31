@@ -51,12 +51,17 @@ int job_compare_sjf(const void* j1, const void* j2)
 void scheduler_start_up(int cores, scheme_t scheme)
 {
   core_count = cores;
+  core_statuses = malloc( core_count * sizeof(int));
+  for(int i=0; i<core_count; i++) {
+    core_statuses[i] = 0;
+  }
+
   current_scheme = scheme;
   if(scheme == SJF || scheme == PRI)
     priqueue_init(&job_queue, job_compare_sjf);
   else
     priqueue_init(&job_queue, job_compare);
-  core_active = 0;
+
   jobs_count = 0;
   accumulated_wait = 0;
   accumulated_turnaround = 0;
@@ -96,8 +101,6 @@ int scheduler_new_job(int job_number, int time, int running_time, int priority)
   new_job->response_time = -1;
 
   int job_index;
-  if(core_active == 0)
-    core_active = 1;
   //decides on priority of new job based on scheme
   switch (current_scheme) 
   {
@@ -106,11 +109,11 @@ int scheduler_new_job(int job_number, int time, int running_time, int priority)
       //add job to queue
       job_index = priqueue_offer(&job_queue, new_job);
       //if new_job is at front of queue, it should be running
-      if(job_index == 0)
+      if(job_index < core_count)
       {
         new_job->response_time = 0;
         new_job->running = 1;
-        return 0;
+        return first_available_core();
       }
       break;
 
@@ -119,11 +122,11 @@ int scheduler_new_job(int job_number, int time, int running_time, int priority)
       //add job to queue
       job_index = priqueue_offer(&job_queue, new_job);
       //if new_job is at front of queue, it should be running
-      if(job_index == 0)
+      if(job_index < core_count)
       {
         new_job->response_time = 0;
         new_job->running = 1;
-        return 0;
+        return first_available_core();
       }
       break;
 
@@ -139,12 +142,12 @@ int scheduler_new_job(int job_number, int time, int running_time, int priority)
       //add job to queue
       job_index = priqueue_offer(&job_queue, new_job);
       //if new_job is at front of queue, it should be running
-      if(job_index == 0)
+      if(job_index < core_count)
       {
         new_job->response_time = 0;
         new_job->start_time = time;
         new_job->running = 1;
-        return 0;
+        return first_available_core();
       }
       break;  
 
@@ -153,11 +156,11 @@ int scheduler_new_job(int job_number, int time, int running_time, int priority)
       //add job to queue
       job_index = priqueue_offer(&job_queue, new_job);
       //if new_job is at front of queue, it should be running
-      if(job_index == 0)
+      if(job_index < core_count)
       {
         new_job->response_time = 0;
         new_job->running = 1;
-        return 0;
+        return first_available_core();
       }
       break;
 
@@ -166,11 +169,11 @@ int scheduler_new_job(int job_number, int time, int running_time, int priority)
       //add job to queue
       job_index = priqueue_offer(&job_queue, new_job);
       //if new_job is at front of queue, it should be running
-      if(job_index == 0)
+      if(job_index < core_count)
       {
         new_job->response_time = 0;
         new_job->running = 1;
-        return 0;
+        return first_available_core();
       }
       break;
 
@@ -179,17 +182,29 @@ int scheduler_new_job(int job_number, int time, int running_time, int priority)
       //add job to queue
       job_index = priqueue_offer(&job_queue, new_job);
       //if new_job is at front of queue, it should be running
-      if(job_index == 0)
+      if(job_index < core_count)
       {
         new_job->response_time = 0;
         new_job->running = 1;
-        return 0;
+        return first_available_core();
       }
       break;
   }
   return -1;
 }
 
+int first_available_core() {
+  int core = -1;
+  for(int i=0; i<core_count; i++) {
+    if (core_statuses[i] == 0) {
+      core = i;
+      break;
+    }
+  }
+  if (core > -1)
+    core_statuses[core] = 1;
+  return core;
+}
 
 /**
   Called when a job has completed execution.
@@ -207,22 +222,32 @@ int scheduler_new_job(int job_number, int time, int running_time, int priority)
  */
 int scheduler_job_finished(int core_id, int job_number, int time)
 {
-  job_t* queue_front = (job_t*) priqueue_peek(&job_queue);
-  accumulated_wait += (time - queue_front->running_time - queue_front->arrival_time);
-  accumulated_response += queue_front->response_time;
-  accumulated_turnaround += (time - queue_front->arrival_time);
-  priqueue_remove(&job_queue, queue_front);
-  if(priqueue_size(&job_queue) == 0)
-  {
-    core_active = 0;
-    return -1;
+  for(int i=0; i<priqueue_size(&job_queue); i++) {
+    job_t * finished_job = (job_t*)priqueue_at(&job_queue, i);
+    if (finished_job->job_id == job_number) {
+      accumulated_wait += (time - finished_job->running_time - finished_job->arrival_time);
+      accumulated_response += finished_job->response_time;
+      accumulated_turnaround += (time - finished_job->arrival_time);
+      priqueue_remove(&job_queue, finished_job);
+    }
+  
   }
-  job_t * new_running_job = (job_t*)priqueue_peek(&job_queue);
-  if(new_running_job->response_time == -1)
-    new_running_job->response_time = time - new_running_job->arrival_time;
-  new_running_job->start_time = time;
-  new_running_job->running = 1;
-  return new_running_job->job_id;
+  
+  for(int i=0; i<priqueue_size(&job_queue); i++) {
+    job_t * new_running_job = (job_t*)priqueue_at(&job_queue, i);
+    // printf("JOB : %d", i);
+    // printf("Running : %d", j->running);
+    if (new_running_job->running == 0) {
+      if(new_running_job->response_time == -1)
+        new_running_job->response_time = time - new_running_job->arrival_time;
+      new_running_job->start_time = time;
+      new_running_job->running = 1;
+      return new_running_job->job_id;
+      break;
+    }
+  }
+  core_statuses[core_id] = 0;
+  return -1;
 }
 
 
