@@ -21,7 +21,7 @@ typedef struct _job_t
   int running_time;
   int running;
   int start_time;
-  int response_time;
+  int last_known_active_time;
 } job_t;
 
 int job_compare(const void* j1, const void* j2)
@@ -100,7 +100,7 @@ int scheduler_new_job(int job_number, int time, int running_time, int priority)
   new_job->running_time = running_time;
   new_job->arrival_time = time;
   new_job->running = 0;
-  new_job->response_time = -1;
+  new_job->start_time = -1;
 
   int job_index;
   //decides on priority of new job based on scheme
@@ -113,8 +113,8 @@ int scheduler_new_job(int job_number, int time, int running_time, int priority)
       //if new_job is at front of queue, it should be running
       if(job_index < core_count)
       {
-        new_job->response_time = 0;
         new_job->running = 1;
+        new_job->start_time = time;
         int starting_core = first_available_core();
         core_jobs[starting_core] = new_job->job_id;
         return starting_core;
@@ -128,8 +128,8 @@ int scheduler_new_job(int job_number, int time, int running_time, int priority)
       //if new_job is at front of queue, it should be running
       if(job_index < core_count)
       {
-        new_job->response_time = 0;
         new_job->running = 1;
+        new_job->start_time = time;
         int starting_core = first_available_core();
         core_jobs[starting_core] = new_job->job_id;
         return starting_core;
@@ -144,22 +144,27 @@ int scheduler_new_job(int job_number, int time, int running_time, int priority)
           break;
 
         job_t* running_job = (job_t*)priqueue_at(&job_queue, i);
-        running_job->priority = running_job->priority - (time - running_job->start_time);
-        running_job->start_time = time;
+        running_job->priority = running_job->priority - (time - running_job->last_known_active_time);
+        running_job->last_known_active_time = time;
       }
       //add job to queue
       job_index = priqueue_offer(&job_queue, new_job);
       //if new_job is at front of queue, it should be running
       if(job_index < core_count)
       {
-        new_job->response_time = 0;
         new_job->start_time = time;
+        new_job->last_known_active_time = time;
         new_job->running = 1;
+        new_job->start_time = time;
         int starting_core;
         if(priqueue_size(&job_queue) > core_count)
         {
           job_t* old_job = (job_t*)priqueue_at(&job_queue, core_count);
           old_job->running = 0;
+          if(old_job->start_time == time)
+          {
+            old_job->start_time = -1;
+          }
           for(int i=0;i<core_count;i++)
           {
             if(core_jobs[i] == old_job->job_id)
@@ -183,8 +188,8 @@ int scheduler_new_job(int job_number, int time, int running_time, int priority)
       //if new_job is at front of queue, it should be running
       if(job_index < core_count)
       {
-        new_job->response_time = 0;
         new_job->running = 1;
+        new_job->start_time = time;
         int starting_core = first_available_core();
         core_jobs[starting_core] = new_job->job_id;
         return starting_core;
@@ -198,13 +203,17 @@ int scheduler_new_job(int job_number, int time, int running_time, int priority)
       //if new_job is at front of queue, it should be running
       if(job_index < core_count)
       {
-        new_job->response_time = 0;
         new_job->running = 1;
+        new_job->start_time = time;
         int starting_core;
         if(priqueue_size(&job_queue) > core_count)
         {
           job_t* old_job = (job_t*)priqueue_at(&job_queue, core_count);
           old_job->running = 0;
+          if(old_job->start_time == time)
+          {
+            old_job->start_time = -1;
+          }
           for(int i=0;i<core_count;i++)
           {
             if(core_jobs[i] == old_job->job_id)
@@ -228,8 +237,8 @@ int scheduler_new_job(int job_number, int time, int running_time, int priority)
       //if new_job is at front of queue, it should be running
       if(job_index < core_count)
       {
-        new_job->response_time = 0;
         new_job->running = 1;
+        new_job->start_time = time;
         int starting_core = first_available_core();
         core_jobs[starting_core] = new_job->job_id;
         return starting_core;
@@ -274,15 +283,15 @@ int scheduler_job_finished(int core_id, int job_number, int time)
         break;
 
       job_t* running_job = (job_t*)priqueue_at(&job_queue, i);
-      running_job->priority = running_job->priority - (time - running_job->start_time);
-      running_job->start_time = time;
+      running_job->priority = running_job->priority - (time - running_job->last_known_active_time);
+      running_job->last_known_active_time = time;
     }
   }
   for(int i=0; i<priqueue_size(&job_queue); i++) {
     job_t * finished_job = (job_t*)priqueue_at(&job_queue, i);
     if (finished_job->job_id == job_number) {
       accumulated_wait += (time - finished_job->running_time - finished_job->arrival_time);
-      accumulated_response += finished_job->response_time;
+      accumulated_response += (finished_job->start_time - finished_job->arrival_time);
       accumulated_turnaround += (time - finished_job->arrival_time);
       priqueue_remove(&job_queue, finished_job);
     }
@@ -294,9 +303,9 @@ int scheduler_job_finished(int core_id, int job_number, int time)
     // printf("JOB : %d", i);
     // printf("Running : %d", j->running);
     if (new_running_job->running == 0) {
-      if(new_running_job->response_time == -1)
-        new_running_job->response_time = time - new_running_job->arrival_time;
-      new_running_job->start_time = time;
+      if(new_running_job->start_time == -1)
+        new_running_job->start_time = time;
+      new_running_job->last_known_active_time = time;
       new_running_job->running = 1;
       core_jobs[core_id] = new_running_job->job_id;
       return new_running_job->job_id;
@@ -335,9 +344,9 @@ int scheduler_quantum_expired(int core_id, int time)
   for(int i=0; i<priqueue_size(&job_queue); i++) {
     job_t * next_job = (job_t*)priqueue_at(&job_queue, i);
     if (next_job->running == 0) {
-      if(next_job->response_time == -1)
-        next_job->response_time = time - next_job->arrival_time;
       next_job->running = 1;
+      if(next_job->start_time == -1)
+        next_job->start_time = time;
       core_jobs[core_id] = next_job->job_id;
     	return next_job->job_id;
     }
